@@ -48,7 +48,7 @@ AUTOCONF_EXTRA_ARGS+="OBJCOPY=$OBJCOPY \
   "
 
 export CFLAGS+=" -mllvm -polly -DANDROID"
-export LDFLAGS+=" -L$PWD/dummy_libs -Wl,--undefined-version" 
+export LDFLAGS+=" -L$PWD/dummy_libs -Wl,--undefined-version -Wl,-z,max-page-size=16384"
 
 # Create dummy libraries so we won't have to remove them in OpenJDK makefiles
 mkdir -p dummy_libs
