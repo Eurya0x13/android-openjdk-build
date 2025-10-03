@@ -1962,51 +1962,73 @@ index 36a08d4c1..a0eca754b 100644
  #if !defined(P_tmpdir)
  #include <paths.h>
 diff --git a/src/java.base/share/native/libjli/java.c b/src/java.base/share/native/libjli/java.c
-index 3b4a15b..1bca2bc 100644
+index c7a930f..a5b17a6 100644
 --- a/src/java.base/share/native/libjli/java.c
 +++ b/src/java.base/share/native/libjli/java.c
-@@ -56,6 +56,32 @@
- #include "java.h"
- #include "jni.h"
+@@ -219,6 +219,63 @@ static jlong initialHeapSize    = 0;  /* initial heap size */
+ #define STACK_SIZE_MINIMUM (64 * KB)
+ #endif
  
 +#ifdef __ANDROID__
-+#include <stdbool.h>
 +#include <dlfcn.h>
++#include <stdbool.h>
++#include <stdlib.h>
++#include <android/log.h>
++
++typedef void (*updateLibrary)(const char *);
++
 +static void android_disable_tags() {
-+    void *lib_handle = dlopen("libc.so", RTLD_LAZY);
-+    if (lib_handle) {
-+        if (android_get_device_api_level() >= 31) {
-+            int (*mallopt_func)(int, int) = dlsym(lib_handle, "mallopt");
-+            if (mallopt_func) {
-+                mallopt_func(M_BIONIC_SET_HEAP_TAGGING_LEVEL, 0);
-+            }
-+            return;
-+        }
-+        /* android_get_device_api_level() < 31 */
-+        bool (*android_mallopt)(int opcode, void* arg, size_t arg_size) = dlsym(lib_handle, "android_mallopt");
-+        if (android_mallopt) {
-+            int android_malloc_tag_level = 0;
-+            android_mallopt(8, &android_malloc_tag_level, sizeof(android_malloc_tag_level));
-+        }
-+        dlclose(lib_handle);
++  void *lib_handle = dlopen("libc.so", RTLD_LAZY);
++  if (lib_handle) {
++    if (android_get_device_api_level() >= 31) {
++      int (*mallopt_func)(int, int) = dlsym(lib_handle, "mallopt");
++      if (mallopt_func) {
++        mallopt_func(M_BIONIC_SET_HEAP_TAGGING_LEVEL, 0);
++      }
++      return;
 +    }
++    /* android_get_device_api_level() < 31 */
++    bool (*android_mallopt)(int opcode, void *arg, size_t arg_size) =
++        dlsym(lib_handle, "android_mallopt");
++    if (android_mallopt) {
++      int android_malloc_tag_level = 0;
++      android_mallopt(8, &android_malloc_tag_level,
++                      sizeof(android_malloc_tag_level));
++    }
++    dlclose(lib_handle);
++  }
++}
++
++static void android_setDlLibraryPath() {
++  void *libdl_handle = dlopen("libdl.so", RTLD_LAZY);
++  if (libdl_handle) {
++    updateLibrary func = dlsym(libdl_handle, "android_update_LD_LIBRARY_PATH");
++    if (!func) {
++      func = dlsym(libdl_handle, "__loader_android_update_LD_LIBRARY_PATH");
++    }
++
++    const char *new_path = getenv("LD_LIBRARY_PATH");
++    __android_log_print(ANDROID_LOG_INFO, "NativeJavaLauncher", "new_path = %s", new_path);
++
++    func(new_path);
++
++
++    void *libawt_handle = dlopen("libawt_headless", RTLD_LAZY | RTLD_GLOBAL);
++    if (libawt_handle) {
++        __android_log_print(ANDROID_LOG_INFO, "NativeJavaLauncher", "libawt_handle = %p", libawt_handle);
++    } else {
++        __android_log_print(ANDROID_LOG_INFO, "NativeJavaLauncher", "dlopen error: %s", dlerror());
++    }
++  }
 +}
 +#else
-+static void android_disable_tags(){}
++static void android_disable_tags() {}
++static void android_setDlLibraryPath() {}
 +#endif
 +
  /*
-  * A NOTE TO DEVELOPERS: For performance reasons it is important that
-  * the program image remain relatively small until after SelectVersion
-@@ -253,6 +279,8 @@ JLI_Launch(int argc, char ** argv,              /* main argc, argv */
-     _is_java_args = javaargs;
-     _wc_enabled = cpwildcard;
- 
-+    android_disable_tags();
-+
-     InitLauncher(javaw);
-     DumpState();
-     if (JLI_IsTraceLauncher()) {
+  * Entry point.
+  */
 diff --git a/src/java.base/unix/native/libjava/jni_util_md.c b/src/java.base/unix/native/libjava/jni_util_md.c
 index 460503cd7..193480e73 100644
 --- a/src/java.base/unix/native/libjava/jni_util_md.c
